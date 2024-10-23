@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Usuarios Cursos Virtuales CB</title>
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <script>
+        (function () {
+            emailjs.init("EBL9ETR7mdPMetoWY");
+            console.log('EmailJS inicializado');
+        })();
+
+        async function enviarDatos(event) {
+            event.preventDefault();
+            const form = event.target;
+            const correo = form.correo.value;
+
+            if (!validarCorreo(correo)) {
+                alert('Por favor, ingrese un correo electrónico válido.');
+                return;
+            }
+
+            mostrarCargando(true);
+
+            try {
+                const usuarioData = await buscarUsuario(correo);
+                if (usuarioData) {
+                    await enviarCorreo(usuarioData);
+                    alert('Correo enviado con éxito');
+                    form.reset(); // Limpiar el formulario
+                } else {
+                    alert('Correo no encontrado');
+                }
+            } catch (error) {
+                alert('Ocurrió un error: ' + error.message);
+            } finally {
+                mostrarCargando(false);
+            }
+        }
+
+        function validarCorreo(correo) {
+            const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            return re.test(correo);
+        }
+
+        async function buscarUsuario(correo) {
+            const url = 'https://sheetdb.io/api/v1/ah7z1m18520d5';
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Error en la respuesta: ${response.status} ${response.statusText}`);
+            }
+            const data = await response.json();
+            return data.find(entry => entry.Correo === correo);
+        }
+
+        async function enviarCorreo(usuarioData) {
+            const templateParams = {
+                to_email: usuarioData.Correo,
+                to_name: usuarioData.Nombre || 'No disponible',
+                to_usuario: usuarioData.Usuario || 'No disponible',
+                to_password: usuarioData.Password || 'No disponible'
+            };
+            await emailjs.send('service_55nc4an', 'users_oxmto3n', templateParams);
+        }
+
+        function mostrarCargando(mostrar) {
+            const loadingElement = document.getElementById('loading');
+            loadingElement.style.display = mostrar ? 'block' : 'none';
+        }
+    </script>
+    <style>
+        body {
+            background-color: #f8e6aa; /* Color de fondo */
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+        #loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(17, 173, 30, 0.932);
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        header {
+            margin: 20px 0;
+        }
+        img.logo {
+            width: 400px; /* Tamaño del logo personalizable */
+            height: auto;
+        }
+        .center-image {
+            max-width: 100%;
+            height: auto;
+            margin: 20px 0;
+        }
+        .form-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        .form-container img {
+            width: 150px; /* Tamaño de la imagen SICB ajustado */
+            height: auto;
+            margin-right: 20px; /* Espacio entre la imagen y el input */
+        }
+        footer {
+            background-color: #f1f1f1;
+            padding: 10px;
+            position: relative;
+            bottom: 0;
+            width: 100%;
+        }
+        footer p {
+            margin: 0;
+            font-size: 0.6rem; /* Tamaño de texto del footer */
+        }
+        h1 {
+            font-family: 'Comic Sans MS', cursive, sans-serif; /* Fuente Comic Sans para el título */
+        }
+        input[type="email"] {
+            width: 300px; /* Ancho ajustado */
+            height: 20px; /* Altura ajustada */
+            padding: 10px; /* Espaciado interno */
+            font-size: 16px; /* Tamaño de fuente */
+            border: 1px solid #ccc; /* Borde */
+            border-radius: 5px; /* Bordes redondeados */
+            margin-right: 10px; /* Espacio a la derecha */
+        }
+        button {
+            background-color: #f0ba0a; /* Color de fondo del botón */
+            color: white; /* Color del texto */
+            padding: 10px 20px; /* Espaciado interno */
+            border: none; /* Sin borde */
+            border-radius: 5px; /* Bordes redondeados */
+            font-size: 16px; /* Tamaño de fuente */
+            cursor: pointer; /* Cambiar cursor al pasar sobre el botón */
+            transition: background-color 0.3s; /* Efecto de transición */
+        }
+        button:hover {
+            background-color: #45a049; /* Color de fondo al pasar el cursor */
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <img src="https://ciudadbienestar.github.io/Curso_PAI/Logos_Acciones_Colectivas-removebg-preview%20(1)%20(1).png" alt="Logo" class="logo">
+    </header>
+    
+    <h1>Consultar Credenciales de Acceso Cursos Virtuales CB</h1>
+    
+    <div class="form-container">
+        <img src="https://ciudadbienestar.github.io/Usuarios_Ciudad_Bienestar/SICB.png" alt="Imagen SICB">
+        <form onsubmit="enviarDatos(event)">
+            <label for="correo">Correo Electrónico Registrado:</label>
+            <input type="email" id="correo" name="correo" required>
+            <button type="submit">Consultar Credenciales de Ingreso</button>
+        </form>
+    </div>
+    
+    <div id="loading">Procesando solicitud...</div>
+
+    <footer>
+        <p><strong>© 2024 Cursos Virtuales - Estrategia de Movilización Social Ciudad Bienestar</strong></p>
+    </footer>
+</body>
+</html>
