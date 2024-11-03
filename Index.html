@@ -1,140 +1,333 @@
-// Función principal con mejor manejo de errores
-async function enviarDatos(event) {
-    event.preventDefault();
-    const form = event.target;
-    const correo = form.correo.value.toLowerCase().trim();
-    const submitButton = form.querySelector('button[type="submit"]');
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sistema de consulta de credenciales para Cursos Virtuales Ciudad Bienestar">
+    <title>Usuarios Cursos Virtuales CB</title>
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <script>
+        // Configuración inicial de EmailJS
+        (function () {
+            try {
+                emailjs.init("vrWv7cbILG9o5ZEALbC82");
+                console.log('EmailJS inicializado correctamente');
+            } catch (error) {
+                console.error('Error al inicializar EmailJS:', error);
+                mostrarError('Error al inicializar el sistema de correo');
+            }
+        })();
 
-    console.log('Iniciando proceso para correo:', correo);
+        // Variables globales para control de ratio límite
+        const LIMITE_INTENTOS = 3;
+        const TIEMPO_ESPERA = 300000; // 5 minutos en milisegundos
+        const intentosPorCorreo = new Map();
 
-    if (!validarCorreo(correo)) {
-        mostrarError('Por favor, ingrese un correo electrónico válido.');
-        return;
-    }
+        // Función principal con mejor manejo de errores
+        async function enviarDatos(event) {
+            event.preventDefault();
+            const form = event.target;
+            const correo = form.correo.value.toLowerCase().trim();
+            const submitButton = form.querySelector('button[type="submit"]');
 
-    try {
-        deshabilitarFormulario(true, submitButton);
-        mostrarCargando(true);
+            console.log('Iniciando proceso para correo:', correo);
 
-        console.log('Buscando usuario en la base de datos...');
-        const usuarioData = await buscarUsuario(correo);
-        
-        if (!usuarioData) {
-            console.log('Usuario no encontrado para el correo:', correo);
-            mostrarError('Correo no encontrado en nuestra base de datos');
-            return;
+            if (!validarCorreo(correo)) {
+                mostrarError('Por favor, ingrese un correo electrónico válido.');
+                return;
+            }
+
+            try {
+                deshabilitarFormulario(true, submitButton);
+                mostrarCargando(true);
+
+                console.log('Buscando usuario en la base de datos...');
+                const usuarioData = await buscarUsuario(correo);
+                
+                if (!usuarioData) {
+                    console.log('Usuario no encontrado para el correo:', correo);
+                    mostrarError('Correo no encontrado en nuestra base de datos');
+                    return;
+                }
+
+                console.log('Usuario encontrado, preparando envío de correo...');
+                console.log('Datos del usuario:', {
+                    correo: usuarioData.Correo,
+                    nombre: usuarioData.Nombre,
+                    curso: usuarioData.Curso
+                });
+
+                await enviarCorreo(usuarioData);
+                console.log('Correo enviado exitosamente');
+                
+                mostrarExito('Credenciales enviadas con éxito a tu correo electrónico');
+                form.reset();
+
+            } catch (error) {
+                console.error('Error detallado:', error);
+                let mensajeError = 'Ocurrió un error al procesar tu solicitud.';
+                
+                if (error.message.includes('base de datos')) {
+                    mensajeError = 'Error al consultar la base de datos. Por favor, intenta más tarde.';
+                } else if (error.message.includes('correo')) {
+                    mensajeError = 'Error al enviar el correo. Por favor, verifica tu dirección de correo.';
+                }
+                
+                mostrarError(mensajeError);
+            } finally {
+                mostrarCargando(false);
+                deshabilitarFormulario(false, submitButton);
+            }
         }
 
-        console.log('Usuario encontrado, preparando envío de correo...');
-        console.log('Datos del usuario:', {
-            correo: usuarioData.Correo,
-            nombre: usuarioData.Nombre,
-            curso: usuarioData.Curso
-        });
-
-        await enviarCorreo(usuarioData);
-        console.log('Correo enviado exitosamente');
-        
-        mostrarExito('Credenciales enviadas con éxito a tu correo electrónico');
-        form.reset();
-
-    } catch (error) {
-        console.error('Error detallado:', error);
-        let mensajeError = 'Ocurrió un error al procesar tu solicitud.';
-        
-        if (error.message.includes('base de datos')) {
-            mensajeError = 'Error al consultar la base de datos. Por favor, intenta más tarde.';
-        } else if (error.message.includes('correo')) {
-            mensajeError = 'Error al enviar el correo. Por favor, verifica tu dirección de correo.';
-        }
-        
-        mostrarError(mensajeError);
-    } finally {
-        mostrarCargando(false);
-        deshabilitarFormulario(false, submitButton);
-    }
-}
-
-// Función mejorada para buscar usuario
-async function buscarUsuario(correo) {
-    const url = 'https://sheetdb.io/api/v1/ah7z1m18520d5';
-    
-    try {
-        console.log('Iniciando búsqueda en:', url);
-        
-        const response = await fetch(url);
-        console.log('Estado de la respuesta:', response.status);
-        
-        if (!response.ok) {
-            throw new Error(`Error en la respuesta del servidor: ${response.status}`);
+        // Validación de correo electrónico
+        function validarCorreo(correo) {
+            const re = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
+            return re.test(correo);
         }
 
-        const data = await response.json();
-        console.log('Datos recibidos:', data ? 'Datos válidos' : 'Sin datos');
-
-        if (!Array.isArray(data)) {
-            console.error('Formato de datos inválido:', typeof data);
-            throw new Error('Formato de datos inválido');
+        // Control de ratio límite
+        function verificarLimiteIntentos(correo) {
+            const intentos = intentosPorCorreo.get(correo) || [];
+            const ahora = Date.now();
+            
+            // Limpiar intentos antiguos
+            const intentosRecientes = intentos.filter(tiempo => ahora - tiempo < TIEMPO_ESPERA);
+            
+            if (intentosRecientes.length >= LIMITE_INTENTOS) {
+                return false;
+            }
+            
+            return true;
         }
 
-        const usuario = data.find(entry => 
-            entry && entry.Correo && 
-            entry.Correo.toLowerCase() === correo.toLowerCase()
-        );
+        function registrarIntento(correo, exitoso) {
+            const intentos = intentosPorCorreo.get(correo) || [];
+            intentos.push(Date.now());
+            intentosPorCorreo.set(correo, intentos);
 
-        console.log('Usuario encontrado:', usuario ? 'Sí' : 'No');
-        return usuario;
-
-    } catch (error) {
-        console.error('Error completo en buscarUsuario:', error);
-        throw new Error('Error al consultar la base de datos: ' + error.message);
-    }
-}
-
-// Función mejorada para enviar correo
-async function enviarCorreo(usuarioData) {
-    console.log('Iniciando envío de correo...');
-    
-    const templateParams = {
-        to_email: usuarioData.Correo,
-        to_name: usuarioData.Nombre || 'Usuario',
-        to_usuario: usuarioData.Usuario || 'No disponible',
-        to_password: usuarioData.Password || 'No disponible',
-        to_curso: usuarioData.Curso || 'No disponible',
-    };
-
-    try {
-        console.log('Enviando correo con EmailJS...');
-        
-        const resultado = await emailjs.send(
-            'service_s8nq09o', 
-            'users_kfihheo', 
-            templateParams
-        );
-
-        console.log('Respuesta de EmailJS:', resultado);
-        
-        if (!resultado || resultado.status !== 200) {
-            throw new Error(`Error en el envío: Estado ${resultado?.status}`);
+            // Limpiar intentos antiguos cada cierto tiempo
+            setTimeout(() => {
+                const intentosActualizados = intentos.filter(tiempo => Date.now() - tiempo < TIEMPO_ESPERA);
+                if (intentosActualizados.length === 0) {
+                    intentosPorCorreo.delete(correo);
+                } else {
+                    intentosPorCorreo.set(correo, intentosActualizados);
+                }
+            }, TIEMPO_ESPERA);
         }
 
-        return resultado;
+        // Búsqueda de usuario en la base de datos
+        async function buscarUsuario(correo) {
+            const url = 'https://sheetdb.io/api/v1/ah7z1m18520d5';
+            
+            try {
+                console.log('Iniciando búsqueda en:', url);
+                
+                const response = await fetch(url);
+                console.log('Estado de la respuesta:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`Error en la respuesta del servidor: ${response.status}`);
+                }
 
-    } catch (error) {
-        console.error('Error detallado en enviarCorreo:', error);
-        throw new Error('Error al enviar el correo electrónico: ' + error.message);
-    }
-}
+                const data = await response.json();
+                console.log('Datos recibidos:', data ? 'Datos válidos' : 'Sin datos');
 
-// Función para mostrar mensajes de error más detallados
-function mostrarError(mensaje) {
-    console.error('Error mostrado al usuario:', mensaje);
-    const mensajeElement = document.getElementById('mensaje');
-    mensajeElement.textContent = mensaje;
-    mensajeElement.className = 'mensaje error';
-    mensajeElement.style.display = 'block';
+                if (!Array.isArray(data)) {
+                    console.error('Formato de datos inválido:', typeof data);
+                    throw new Error('Formato de datos inválido');
+                }
 
-    setTimeout(() => {
-        mensajeElement.style.display = 'none';
-    }, 5000);
-}
+                const usuario = data.find(entry => 
+                    entry && entry.Correo && 
+                    entry.Correo.toLowerCase() === correo.toLowerCase()
+                );
+
+                console.log('Usuario encontrado:', usuario ? 'Sí' : 'No');
+                return usuario;
+
+            } catch (error) {
+                console.error('Error completo en buscarUsuario:', error);
+                throw new Error('Error al consultar la base de datos: ' + error.message);
+            }
+        }
+
+        // Función mejorada para enviar correo
+        async function enviarCorreo(usuarioData) {
+            console.log('Iniciando envío de correo...');
+            
+            const templateParams = {
+                to_email: usuarioData.Correo,
+                to_name: usuarioData.Nombre || 'Usuario',
+                to_usuario: usuarioData.Usuario || 'No disponible',
+                to_password: usuarioData.Password || 'No disponible',
+                to_curso: usuarioData.Curso || 'No disponible',
+            };
+
+            try {
+                console.log('Enviando correo con EmailJS...');
+                
+                const resultado = await emailjs.send(
+                    'service_s8nq09o', 
+                    'users_kfihheo', 
+                    templateParams
+                );
+
+                console.log('Respuesta de EmailJS:', resultado);
+                
+                if (!resultado || resultado.status !== 200) {
+                    throw new Error(`Error en el envío: Estado ${resultado?.status}`);
+                }
+
+                return resultado;
+
+            } catch (error) {
+                console.error('Error detallado en enviarCorreo:', error);
+                throw new Error('Error al enviar el correo electrónico: ' + error.message);
+            }
+        }
+
+        // Funciones de UI
+        function mostrarCargando(mostrar) {
+            const loadingElement = document.getElementById('loading');
+            const overlay = document.getElementById('overlay');
+            loadingElement.style.display = mostrar ? 'block' : 'none';
+            overlay.style.display = mostrar ? 'block' : 'none';
+        }
+
+        function deshabilitarFormulario(deshabilitar, submitButton) {
+            submitButton.disabled = deshabilitar;
+            submitButton.style.opacity = deshabilitar ? '0.7' : '1';
+            submitButton.textContent = deshabilitar ? 'Procesando...' : 'Consultar Credenciales de Ingreso';
+        }
+
+        function mostrarMensaje(mensaje, tipo) {
+            const mensajeElement = document.getElementById('mensaje');
+            mensajeElement.textContent = mensaje;
+            mensajeElement.className = `mensaje ${tipo}`;
+            mensajeElement.style.display = 'block';
+
+            // Ocultar mensaje después de 5 segundos
+            setTimeout(() => {
+                mensajeElement.style.display = 'none';
+            }, 5000);
+        }
+
+        function mostrarError(mensaje) {
+            console.error('Error mostrado al usuario:', mensaje);
+            mostrarMensaje(mensaje, 'error');
+        }
+
+        function mostrarExito(mensaje) {
+            mostrarMensaje(mensaje, 'exito');
+        }
+    </script>
+    <style>
+        :root {
+            --color-primario: #f0ba0a;
+            --color-secundario: #45a049;
+            --color-error: #ff4444;
+            --color-exito: #00C851;
+            --color-fondo: #f8e6aa;
+            --color-texto: #333;
+        }
+
+        body {
+            background-color: var(--color-fondo);
+            text-align: center;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            color: var(--color-texto);
+        }
+
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 998;
+        }
+
+        #loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 999;
+        }
+
+        #formulario {
+            margin: 50px auto;
+            max-width: 400px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        input[type="email"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button {
+            background-color: var(--color-primario);
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: var(--color-secundario);
+        }
+
+        .mensaje {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .mensaje.error {
+            background-color: var(--color-error);
+            color: white;
+        }
+
+        .mensaje.exito {
+            background-color: var(--color-exito);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="overlay"></div>
+    <div id="loading">Cargando...</div>
+    <div id="formulario">
+        <h1>Consulta de Credenciales</h1>
+        <form onsubmit="enviarDatos(event)">
+            <input type="email" name="correo" placeholder="Correo electrónico" required>
+            <button type="submit">Consultar Credenciales de Ingreso</button>
+        </form>
+        <div id="mensaje" class="mensaje"></div>
+    </div>
+</body>
+</html>
