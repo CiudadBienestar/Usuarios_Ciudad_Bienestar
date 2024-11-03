@@ -1,101 +1,14 @@
-// Configuración
-const CONFIG = {
-    LIMITE_INTENTOS: 3,
-    TIEMPO_ESPERA: 300000, // 5 minutos
-    EMAIL_PUBLIC_KEY: "vrWv7cbILG9o5ZEALbC82", // Idealmente en variables de entorno
-    SHEETDB_URL: "https://sheetdb.io/api/v1/ah7z1m18520d5"
-};
-
-// Clase para manejar el control de ratio límite
-class RateLimiter {
-    constructor() {
-        this.intentos = new Map();
-        this.timeouts = new Map();
-    }
-
-    verificarLimite(correo) {
-        const intentos = this.intentos.get(correo) || [];
-        const ahora = Date.now();
-        const intentosRecientes = intentos.filter(tiempo => 
-            ahora - tiempo < CONFIG.TIEMPO_ESPERA
-        );
-        
-        this.intentos.set(correo, intentosRecientes);
-        return intentosRecientes.length < CONFIG.LIMITE_INTENTOS;
-    }
-
-    registrarIntento(correo) {
-        const intentos = this.intentos.get(correo) || [];
-        intentos.push(Date.now());
-        this.intentos.set(correo, intentos);
-
-        // Limpiar timeout anterior si existe
-        if (this.timeouts.has(correo)) {
-            clearTimeout(this.timeouts.get(correo));
-        }
-
-        // Establecer nuevo timeout
-        const timeoutId = setTimeout(() => {
-            this.intentos.delete(correo);
-            this.timeouts.delete(correo);
-        }, CONFIG.TIEMPO_ESPERA);
-
-        this.timeouts.set(correo, timeoutId);
-    }
-
-    limpiar(correo) {
-        this.intentos.delete(correo);
-        if (this.timeouts.has(correo)) {
-            clearTimeout(this.timeouts.get(correo));
-            this.timeouts.delete(correo);
-        }
-    }
-}
-
-// Instancia global del rate limiter
-const rateLimiter = new RateLimiter();
-
-// Función mejorada para buscar usuario
-async function buscarUsuario(correo) {
-    try {
-        const response = await fetch(CONFIG.SHEETDB_URL);
-        if (!response.ok) {
-            throw new Error(`Error en la respuesta: ${response.status}`);
-        }
-        const data = await response.json();
-        
-        // Validar estructura de datos
-        if (!Array.isArray(data)) {
-            throw new Error('Formato de datos inválido');
-        }
-
-        const usuario = data.find(entry => 
-            entry && 
-            typeof entry.Correo === 'string' && 
-            entry.Correo.toLowerCase() === correo.toLowerCase()
-        );
-
-        return usuario || null;
-    } catch (error) {
-        console.error('Error al buscar usuario:', error);
-        throw new Error('Error al consultar la base de datos');
-    }
-}
-
-// Función principal mejorada
+// Función principal con mejor manejo de errores
 async function enviarDatos(event) {
     event.preventDefault();
     const form = event.target;
     const correo = form.correo.value.toLowerCase().trim();
     const submitButton = form.querySelector('button[type="submit"]');
 
+    console.log('Iniciando proceso para correo:', correo);
+
     if (!validarCorreo(correo)) {
         mostrarError('Por favor, ingrese un correo electrónico válido.');
-        return;
-    }
-
-    if (!rateLimiter.verificarLimite(correo)) {
-        mostrarError(`Has excedido el límite de intentos. Por favor, espera 5 minutos.`);
         return;
     }
 
@@ -103,28 +16,85 @@ async function enviarDatos(event) {
         deshabilitarFormulario(true, submitButton);
         mostrarCargando(true);
 
+        console.log('Buscando usuario en la base de datos...');
         const usuarioData = await buscarUsuario(correo);
-        if (usuarioData) {
-            await enviarCorreo(usuarioData);
-            mostrarExito('Credenciales enviadas con éxito a tu correo electrónico');
-            form.reset();
-            rateLimiter.limpiar(correo); // Limpiar intentos tras éxito
-        } else {
+        
+        if (!usuarioData) {
+            console.log('Usuario no encontrado para el correo:', correo);
             mostrarError('Correo no encontrado en nuestra base de datos');
-            rateLimiter.registrarIntento(correo);
+            return;
         }
+
+        console.log('Usuario encontrado, preparando envío de correo...');
+        console.log('Datos del usuario:', {
+            correo: usuarioData.Correo,
+            nombre: usuarioData.Nombre,
+            curso: usuarioData.Curso
+        });
+
+        await enviarCorreo(usuarioData);
+        console.log('Correo enviado exitosamente');
+        
+        mostrarExito('Credenciales enviadas con éxito a tu correo electrónico');
+        form.reset();
+
     } catch (error) {
-        console.error('Error en el proceso:', error);
-        mostrarError('Ocurrió un error al procesar tu solicitud. Por favor, intenta nuevamente más tarde.');
-        rateLimiter.registrarIntento(correo);
+        console.error('Error detallado:', error);
+        let mensajeError = 'Ocurrió un error al procesar tu solicitud.';
+        
+        if (error.message.includes('base de datos')) {
+            mensajeError = 'Error al consultar la base de datos. Por favor, intenta más tarde.';
+        } else if (error.message.includes('correo')) {
+            mensajeError = 'Error al enviar el correo. Por favor, verifica tu dirección de correo.';
+        }
+        
+        mostrarError(mensajeError);
     } finally {
         mostrarCargando(false);
         deshabilitarFormulario(false, submitButton);
     }
 }
 
+// Función mejorada para buscar usuario
+async function buscarUsuario(correo) {
+    const url = 'https://sheetdb.io/api/v1/ah7z1m18520d5';
+    
+    try {
+        console.log('Iniciando búsqueda en:', url);
+        
+        const response = await fetch(url);
+        console.log('Estado de la respuesta:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`Error en la respuesta del servidor: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Datos recibidos:', data ? 'Datos válidos' : 'Sin datos');
+
+        if (!Array.isArray(data)) {
+            console.error('Formato de datos inválido:', typeof data);
+            throw new Error('Formato de datos inválido');
+        }
+
+        const usuario = data.find(entry => 
+            entry && entry.Correo && 
+            entry.Correo.toLowerCase() === correo.toLowerCase()
+        );
+
+        console.log('Usuario encontrado:', usuario ? 'Sí' : 'No');
+        return usuario;
+
+    } catch (error) {
+        console.error('Error completo en buscarUsuario:', error);
+        throw new Error('Error al consultar la base de datos: ' + error.message);
+    }
+}
+
 // Función mejorada para enviar correo
 async function enviarCorreo(usuarioData) {
+    console.log('Iniciando envío de correo...');
+    
     const templateParams = {
         to_email: usuarioData.Correo,
         to_name: usuarioData.Nombre || 'Usuario',
@@ -134,12 +104,37 @@ async function enviarCorreo(usuarioData) {
     };
 
     try {
-        const resultado = await emailjs.send('service_s8nq09o', 'users_kfihheo', templateParams);
+        console.log('Enviando correo con EmailJS...');
+        
+        const resultado = await emailjs.send(
+            'service_s8nq09o', 
+            'users_kfihheo', 
+            templateParams
+        );
+
+        console.log('Respuesta de EmailJS:', resultado);
+        
         if (!resultado || resultado.status !== 200) {
-            throw new Error('Error en el envío del correo');
+            throw new Error(`Error en el envío: Estado ${resultado?.status}`);
         }
+
+        return resultado;
+
     } catch (error) {
-        console.error('Error al enviar correo:', error);
-        throw new Error('Error al enviar el correo electrónico');
+        console.error('Error detallado en enviarCorreo:', error);
+        throw new Error('Error al enviar el correo electrónico: ' + error.message);
     }
+}
+
+// Función para mostrar mensajes de error más detallados
+function mostrarError(mensaje) {
+    console.error('Error mostrado al usuario:', mensaje);
+    const mensajeElement = document.getElementById('mensaje');
+    mensajeElement.textContent = mensaje;
+    mensajeElement.className = 'mensaje error';
+    mensajeElement.style.display = 'block';
+
+    setTimeout(() => {
+        mensajeElement.style.display = 'none';
+    }, 5000);
 }
